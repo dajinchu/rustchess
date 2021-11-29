@@ -6,6 +6,7 @@ mod board;
 mod piece;
 
 fn main() {
+    println!("{}", size_of::<Board>());
     let b = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string()).unwrap();
     println!("{:?}", b);
     println!("{}", b);

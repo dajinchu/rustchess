@@ -16,10 +16,9 @@ pub struct Board {
     castle_bk: bool,
     castle_wq: bool,
     castle_wk: bool,
-    passant: u8,
+    passant: Option<Square>,
     halfmoves: u8,
 }
-const NO_PASSANT: u8 = 65;
 
 #[derive(Debug)]
 struct BitBoardPieces {
@@ -33,23 +32,85 @@ struct BitBoardPieces {
 
 type BitBoard = u64;
 
+#[derive(Debug, Copy, Clone)]
+pub struct Square {
+    rank: u8,
+    file: u8,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct Move {
+    from: Square,
+    to: Square,
+}
+
 pub fn to_mask(file: u8, rank: u8) -> u64 {
     1 << (rank * 8 + file)
 }
 
-pub fn algebraic_to_index(algebraic: String) -> u8 {
+pub fn algebraic_to_square(algebraic: String) -> Square {
     let mut chars = algebraic.chars();
-    println!("{}", algebraic);
-    let file = chars.next().unwrap() as u8 - b'a';
+    let file = letter_to_file(chars.next().unwrap());
     let rank = chars.next().unwrap().to_digit(10).unwrap() as u8;
-    rank * 8 + file
+    Square { rank, file }
 }
 
+pub fn file_to_letter(file: u8) -> char {
+    (b'a' + file) as char
+}
+
+pub fn letter_to_file(file: char) -> u8 {
+    file as u8 - b'a'
+}
+
+fn for_bitboard_ones(b: BitBoard, mut func: impl FnMut(u8, u8)) {
+    let mut bb = b;
+    for rank in 0..8 {
+        for file in 0..8 {
+            if bb & 1 == 1 {
+                func(rank, file);
+            }
+            bb >>= 1;
+        }
+    }
+}
+
+const D_N: i8 = 8;
+const D_NE: i8 = 9;
+const D_E: i8 = 2;
+const D_SE: i8 = -7;
+const D_S: i8 = -8;
+const D_SW: i8 = -9;
+const D_W: i8 = -1;
+const D_NW: i8 = 7;
+
+const MASK_NORTH: u64 = 0b11111111 << (8*7);
+const MASK_EAST: u64 = 0x8080_8080_8080_8080;
+const MASK_SOUTH: u64 = 0b11111111;
+const MASK_WEST: u64 = 0x0101_0101_0101_0101;
+
 impl Board {
+    pub fn starting_position() -> Board {
+        Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string())
+            .unwrap()
+    }
+    pub fn empty_board() -> Board {
+        Board {
+            white: BitBoardPieces::blank(),
+            black: BitBoardPieces::blank(),
+            active: White,
+            castle_bq: true,
+            castle_bk: true,
+            castle_wq: true,
+            castle_wk: true,
+            passant: None,
+            halfmoves: 0,
+        }
+    }
     pub fn from_fen(fen: String) -> Result<Board, ()> {
         let v: Vec<&str> = fen.split(' ').collect();
         match v[..] {
-            [pieces, active, castle, passant, halfmove, fullmove] => {
+            [pieces, active, castle, passant, halfmove, _fullmove] => {
                 let active_color = match active {
                     "w" => White,
                     "b" => Black,
@@ -68,9 +129,9 @@ impl Board {
                         _ => (),
                     }
                 }
-                let passant = match passant {
-                    "-" => NO_PASSANT,
-                    _ => algebraic_to_index(passant.to_string()),
+                let passant: Option<Square> = match passant {
+                    "-" => None,
+                    _ => Some(algebraic_to_square(passant.to_string())),
                 };
                 let mut board = Board {
                     white: BitBoardPieces::blank(),
@@ -84,7 +145,7 @@ impl Board {
                     halfmoves: halfmove.to_string().parse::<u8>().unwrap(),
                 };
                 for (i, s) in pieces.split('/').enumerate() {
-                    let rank = 7-i;
+                    let rank = 7 - i;
                     let mut file: u8 = 0;
                     for c in s.chars() {
                         match c.to_digit(10) {
@@ -92,7 +153,7 @@ impl Board {
                             None => {
                                 board.set_square(file, rank as u8, fen_to_piece(c).unwrap());
                                 file += 1;
-                            },
+                            }
                         }
                     }
                 }
@@ -100,6 +161,22 @@ impl Board {
             }
             _ => Err(()),
         }
+    }
+
+    pub fn valid_moves(&self) {}
+    fn pawn_moves(&self) -> Vec<Move> {
+        self.get_pieces(self.active).pawn_moves(
+            self.occupancy(self.active.other()),
+            self.occupancy(self.active),
+        )
+    }
+    fn rook_moves(&self) {
+        let b = self.bitboard_for(self.active, Rook);
+
+        ()
+    }
+    fn occupancy(&self, color: Color) -> BitBoard {
+        self.get_pieces(color).bitboard_occupancy()
     }
 
     fn get_pieces_mut(&mut self, color: Color) -> &mut BitBoardPieces {
@@ -131,10 +208,49 @@ impl Board {
         }
         None
     }
+    fn clear_square(&mut self, file: u8, rank: u8) {
+        for c in Color::iterator() {
+            for p in PieceType::iterator() {
+                let pieces = self.get_pieces_mut(*c);
+                pieces.set_bitboard(*p, pieces.bitboard_for(*p) & !to_mask(file, rank));
+            }
+        }
+        return ();
+    }
     fn set_square(&mut self, file: u8, rank: u8, piece: Piece) {
         let pieces = self.get_pieces_mut(piece.0);
         pieces.set_bitboard(piece.1, pieces.bitboard_for(piece.1) | to_mask(file, rank));
         return ();
+    }
+    fn to_ascii(&self) -> String {
+        let mut str = String::with_capacity(90);
+        for rank in (0..8).rev() {
+            str.push(std::char::from_digit(rank + 1, 10).unwrap());
+            for file in 0..8 {
+                let c: char = match self.piece_at(file, rank as u8) {
+                    Some(p) => piece_to_ascii(p),
+                    None => ' ',
+                };
+                str.push(c)
+            }
+            str.push('\n')
+        }
+        str.push_str(" abcdefgh");
+        str
+    }
+    // initialize from ascii of board, with a1 bottom left (white perspective)
+    fn from_ascii(str: String) -> Board {
+        let mut b = Board::empty_board();
+        for (i, c) in str.split('\n').enumerate() {
+            let rank = 7 - i;
+            for (file, c) in c.chars().enumerate() {
+                match ascii_to_piece(c) {
+                    Some(p) => b.set_square(file as u8, rank as u8, p),
+                    None => (),
+                }
+            }
+        }
+        b
     }
 }
 
@@ -159,6 +275,9 @@ impl BitBoardPieces {
             King => self.kings = board,
         }
     }
+    fn bitboard_occupancy(&self) -> BitBoard {
+        self.pawns | self.rooks | self.knights | self.bishops | self.queens | self.kings
+    }
     fn bitboard_for(&self, piece: PieceType) -> BitBoard {
         match piece {
             Pawn => self.pawns,
@@ -169,28 +288,210 @@ impl BitBoardPieces {
             King => self.kings,
         }
     }
+    fn pawn_moves(&self, occ_opp: BitBoard, occ_self: BitBoard) -> Vec<Move> {
+        let occ = occ_opp | occ_self;
+        let unblocked = !(occ >> D_N) & self.pawns;
+        let mut moves = Vec::new();
+        // Move forward 1
+        for_bitboard_ones(unblocked << D_N, |rank, file| {
+            moves.push(Move {
+                from: Square {
+                    rank: rank - 1,
+                    file,
+                },
+                to: Square { rank, file },
+            })
+        });
+        // Move forward 2 if in starting square
+        for_bitboard_ones(
+            (unblocked & 0b11111111_00000000) << (2 * D_N),
+            |rank, file| {
+                moves.push(Move {
+                    from: Square {
+                        rank: rank - 2,
+                        file,
+                    },
+                    to: Square { rank, file },
+                })
+            },
+        );
+        // Captures
+        for_bitboard_ones(
+            self.pawns << D_NE & occ_opp & !MASK_WEST,
+            |rank, file| {
+                moves.push(Move {
+                    from: Square {
+                        rank: rank - 1,
+                        file: file - 1,
+                    },
+                    to: Square { rank, file },
+                })
+            },
+        );
+        for_bitboard_ones(
+            self.pawns << D_NW & occ_opp & !MASK_EAST,
+            |rank, file| {
+                moves.push(Move {
+                    from: Square {
+                        rank: rank - 1,
+                        file: file + 1,
+                    },
+                    to: Square { rank, file },
+                })
+            },
+        );
+        moves
+    }
 }
 
 impl std::fmt::Display for Board {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let mut str = String::with_capacity(64 + 8);
-        for rank in 0..8 {
-            for file in 0..8 {
-                let c: char = match self.piece_at(file, rank) {
-                    Some(p) => match p {
-                        (_, Pawn) => 'P',
-                        (_, Rook) => 'R',
-                        (_, Knight) => 'N',
-                        (_, Bishop) => 'B',
-                        (_, Queen) => 'Q',
-                        (_, King) => 'K',
-                    },
-                    None => ' ',
-                };
-                str.push(c)
-            }
-            str.push('\n')
-        }
-        write!(f, "{}", str)
+        write!(f, "{}", self.to_ascii())
+    }
+}
+
+impl std::fmt::Display for Move {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}{}", self.from, self.to)
+    }
+}
+
+impl std::fmt::Display for Square {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}{}", file_to_letter(self.file), self.rank + 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn move_strings(moves: Vec<Move>) -> Vec<String> {
+        moves.iter().map(|m| m.to_string()).collect::<Vec<String>>()
+    }
+
+    #[test]
+    fn test_file_to_letter() {
+        assert_eq!(
+            (0..8).map(|n| file_to_letter(n)).collect::<Vec<char>>(),
+            vec!['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
+        )
+    }
+
+    #[test]
+    fn from_fen_starting_position() {
+        let b =
+            Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string())
+                .unwrap();
+        assert_eq!(
+            b.to_ascii(),
+            [
+                "8♜♞♝♛♚♝♞♜",
+                "7♟♟♟♟♟♟♟♟",
+                "6        ",
+                "5        ",
+                "4        ",
+                "3        ",
+                "2♙♙♙♙♙♙♙♙",
+                "1♖♘♗♕♔♗♘♖",
+                " abcdefgh"
+            ]
+            .join("\n")
+        );
+        assert_eq!(b.castle_bk, true);
+        assert_eq!(b.castle_bq, true);
+        assert_eq!(b.castle_wk, true);
+        assert_eq!(b.castle_wq, true);
+        assert!(b.passant.is_none());
+        assert_eq!(b.halfmoves, 0)
+    }
+
+    #[test]
+    fn from_fen_random() {
+        let b = Board::from_fen(
+            "6n1/1NqBpPbQ/3PP2P/2pppP2/1k1N3P/ppr3P1/2p5/R1n1RKBb w - - 0 1".to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            b.to_ascii(),
+            [
+                "8      ♞ ",
+                "7 ♘♛♗♟♙♝♕",
+                "6   ♙♙  ♙",
+                "5  ♟♟♟♙  ",
+                "4 ♚ ♘   ♙",
+                "3♟♟♜   ♙ ",
+                "2  ♟     ",
+                "1♖ ♞ ♖♔♗♝",
+                " abcdefgh",
+            ]
+            .join("\n")
+        );
+        assert_eq!(b.castle_bk, false);
+        assert_eq!(b.castle_bq, false);
+        assert_eq!(b.castle_wk, false);
+        assert_eq!(b.castle_wq, false);
+        assert!(b.passant.is_none());
+        assert_eq!(b.halfmoves, 0)
+    }
+
+    #[test]
+    fn pawn_moves_no_obstacles() {
+        let b = Board::from_ascii(
+            [
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "♙♙      ",
+                "        ",
+            ]
+            .join("\n"),
+        );
+        let moves = b.pawn_moves();
+        let expected = ["a2a3", "b2b3", "a2a4", "b2b4"];
+        assert_eq!(move_strings(moves), expected)
+    }
+
+    #[test]
+    fn pawn_moves_obstacles() {
+        let b = Board::from_ascii(
+            [
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "♟       ",
+                "♙ ♙♟    ",
+                "   ♙ ♙  ",
+                "        ",
+            ]
+            .join("\n"),
+        );
+        let moves = b.pawn_moves();
+        let expected = ["f2f3", "c3c4", "f2f4"];
+        assert_eq!(move_strings(moves), expected)
+    }
+
+    #[test]
+    fn pawn_moves_captures() {
+        let b = Board::from_ascii(
+            [
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "♟♟♟    ♟",
+                "♙ ♙    ♙",
+                "        ",
+                "        ",
+            ]
+            .join("\n"),
+        );
+        let moves = b.pawn_moves();
+        let expected = ["a3b4", "c3b4"];
+        assert_eq!(move_strings(moves), expected)
     }
 }

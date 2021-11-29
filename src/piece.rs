@@ -34,7 +34,7 @@ pub fn fen_to_piece(fen: char) -> Option<Piece> {
         'B' => Some((White, Bishop)),
         'Q' => Some((White, Queen)),
         'K' => Some((White, King)),
-        _ => None
+        _ => None,
     }
 }
 
@@ -43,10 +43,51 @@ impl Color {
         static COLORS: [Color; 2] = [White, Black];
         COLORS.iter()
     }
+    pub fn other(&self) -> Color {
+        match self {
+            Black => White,
+            White => Black
+        }
+    }
 }
 impl PieceType {
     pub fn iterator() -> Iter<'static, PieceType> {
         static PIECE_TYPES: [PieceType; 6] = [Pawn, Rook, Knight, Bishop, Queen, King];
         PIECE_TYPES.iter()
     }
+}
+
+pub fn piece_to_ascii(p: Piece) -> char {
+    match p {
+        (White, Pawn) => '♙',
+        (White, Rook) => '♖',
+        (White, Knight) => '♘',
+        (White, Bishop) => '♗',
+        (White, Queen) => '♕',
+        (White, King) => '♔',
+        (Black, Pawn) => '♟',
+        (Black, Rook) => '♜',
+        (Black, Knight) => '♞',
+        (Black, Bishop) => '♝',
+        (Black, Queen) => '♛',
+        (Black, King) => '♚',
+    }
+}
+
+pub fn ascii_to_piece(c: char) -> Option<Piece> {
+    Some(match c {
+        '♙' => (White, Pawn),
+        '♖' => (White, Rook),
+        '♘' => (White, Knight),
+        '♗' => (White, Bishop),
+        '♕' => (White, Queen),
+        '♔' => (White, King),
+        '♟' => (Black, Pawn),
+        '♜' => (Black, Rook),
+        '♞' => (Black, Knight),
+        '♝' => (Black, Bishop),
+        '♛' => (Black, Queen),
+        '♚' => (Black, King),
+        _ => return None,
+    })
 }
