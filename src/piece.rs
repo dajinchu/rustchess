@@ -1,13 +1,13 @@
 use std::slice::Iter;
 pub type Piece = (Color, PieceType);
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Color {
     Black,
     White,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum PieceType {
     Pawn,
     Rook,

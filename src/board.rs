@@ -272,6 +272,7 @@ impl Board {
     }
     fn pawn_moves(&self) -> Vec<Move> {
         self.get_pieces(self.active).pawn_moves(
+            self.active,
             self.occupancy(self.active.other()),
             self.occupancy(self.active),
         )
@@ -419,15 +420,16 @@ impl BitBoardPieces {
             King => self.kings,
         }
     }
-    fn pawn_moves(&self, occ_opp: BitBoard, occ_self: BitBoard) -> Vec<Move> {
+    fn pawn_moves(&self, color: Color, occ_opp: BitBoard, occ_self: BitBoard) -> Vec<Move> {
+        let sign = if color == Black { -1 } else { 1 };
         let occ = occ_opp | occ_self;
-        let unblocked = !(shift(occ, D_S)) & self.pawns;
+        let unblocked = !(shift(occ, D_S * sign)) & self.pawns;
         let mut moves = Vec::new();
         // Move forward 1
-        for_bitboard_ones(shift(unblocked, D_N), |rank, file| {
+        for_bitboard_ones(shift(unblocked, D_N * sign), |rank, file| {
             moves.push(Move {
                 from: Square {
-                    rank: rank - 1,
+                    rank: (rank as i8 - sign) as u8,
                     file,
                 },
                 to: Square { rank, file },
@@ -435,11 +437,14 @@ impl BitBoardPieces {
         });
         // Move forward 2 if in starting square
         for_bitboard_ones(
-            shift(unblocked & 0b11111111_00000000, 2 * D_N),
+            shift(
+                unblocked & MASK_RANK[if color == Black { 6 } else { 1 }],
+                D_N * 2 * sign,
+            ),
             |rank, file| {
                 moves.push(Move {
                     from: Square {
-                        rank: rank - 2,
+                        rank: (rank as i8 - 2 * sign) as u8,
                         file,
                     },
                     to: Square { rank, file },
@@ -448,11 +453,11 @@ impl BitBoardPieces {
         );
         // Captures
         for_bitboard_ones(
-            shift(self.pawns, D_NE) & occ_opp & !MASK_FILE[0],
+            safe_shift(self.pawns, D_N * sign + D_E) & occ_opp,
             |rank, file| {
                 moves.push(Move {
                     from: Square {
-                        rank: rank - 1,
+                        rank: (rank as i8 - sign) as u8,
                         file: file - 1,
                     },
                     to: Square { rank, file },
@@ -460,11 +465,11 @@ impl BitBoardPieces {
             },
         );
         for_bitboard_ones(
-            shift(self.pawns, D_NW) & occ_opp & !MASK_FILE[7],
+            safe_shift(self.pawns, D_N * sign + D_W) & occ_opp,
             |rank, file| {
                 moves.push(Move {
                     from: Square {
-                        rank: rank - 1,
+                        rank: (rank as i8 - sign) as u8,
                         file: file + 1,
                     },
                     to: Square { rank, file },
@@ -711,6 +716,27 @@ mod tests {
     }
 
     #[test]
+    fn pawn_moves_black() {
+        let mut b = Board::from_ascii(
+            [
+                "        ",
+                "  ♟     ",
+                "        ",
+                "        ",
+                "♟♟     ♟",
+                "♙      ♙",
+                "        ",
+                "        ",
+            ]
+            .join("\n"),
+        );
+        b.active = Black;
+        let moves = b.pawn_moves();
+        let expected = vec!["b4a3", "b4b3", "c7c6", "c7c5"];
+        assert!(match_array(move_strings(moves), expected));
+    }
+
+    #[test]
     fn king_moves_no_obstacles() {
         let b = Board::from_ascii(
             [
@@ -865,7 +891,6 @@ mod tests {
         assert!(match_array(move_strings(moves), expected))
     }
 
-
     #[test]
     fn knight_moves_no_obs() {
         let b = Board::from_ascii(
@@ -883,7 +908,7 @@ mod tests {
         );
         let moves = b.knight_moves();
         let expected = vec![
-            "c3a2","c3b1","c3d1","c3e2","c3a4","c3b5","c3d5","c3e4"
+            "c3a2", "c3b1", "c3d1", "c3e2", "c3a4", "c3b5", "c3d5", "c3e4",
         ];
         assert!(match_array(move_strings(moves), expected))
     }
@@ -904,9 +929,7 @@ mod tests {
             .join("\n"),
         );
         let moves = b.knight_moves();
-        let expected = vec![
-            "b1a3","b1c3"
-        ];
+        let expected = vec!["b1a3", "b1c3"];
         assert!(match_array(move_strings(moves), expected))
     }
 }
