@@ -1,9 +1,11 @@
+#![feature(const_trait_impl)]
 use std::mem::size_of;
 
 use crate::board::Board;
 
 mod board;
 mod piece;
+mod vec2d;
 mod util;
 
 fn main() {

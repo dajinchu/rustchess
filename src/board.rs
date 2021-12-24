@@ -1,6 +1,7 @@
 use crate::piece::Color::*;
 use crate::piece::PieceType::*;
 use crate::piece::*;
+use crate::vec2d::*;
 /*
 Notes:
 How to represent color? Separate bitboards for each color or a mask?
@@ -84,14 +85,14 @@ pub fn for_bitboard_ones(b: BitBoard, mut func: impl FnMut(u8, u8)) {
     }
 }
 
-fn ray_moves(from: Square, occ_opp: BitBoard, occ_self: BitBoard, dirs: &[Direction]) -> Vec<Move> {
+fn ray_moves(from: Square, occ_opp: BitBoard, occ_self: BitBoard, dirs: &[Vec2D]) -> Vec<Move> {
     let mut moves = Vec::new();
     let origin = to_mask(from.file, from.rank);
     let mut dests = Vec::new();
     for dir in dirs {
         let mut pointer = origin;
         loop {
-            pointer = safe_shift(pointer, *dir, 1);
+            pointer = safe_shift(pointer, *dir);
             if pointer == 0 {
                 break;
             }
@@ -115,30 +116,32 @@ fn ray_moves(from: Square, occ_opp: BitBoard, occ_self: BitBoard, dirs: &[Direct
     moves
 }
 
-const D_N: Direction = 8;
-const D_NE: Direction = 9;
-const D_E: Direction = 1;
-const D_SE: Direction = -7;
-const D_S: Direction = -8;
-const D_SW: Direction = -9;
-const D_W: Direction = -1;
-const D_NW: Direction = 7;
-type Direction = i8;
+const D_N: Vec2D = vec2d!(1, 0);
+const D_E: Vec2D = vec2d!(0, 1);
+const D_S: Vec2D = vec2d!(-1, 0);
+const D_W: Vec2D = vec2d!(0, -1);
+const D_NE: Vec2D = D_N + D_E;
+const D_SE: Vec2D = D_S + D_E;
+const D_SW: Vec2D = D_S + D_W;
+const D_NW: Vec2D = D_N + D_W;
 
-const D_CARDINAL: [Direction; 4] = [D_N, D_E, D_S, D_W];
-const D_ORDINAL: [Direction; 4] = [D_NE, D_SE, D_SW, D_NW];
+const D_CARDINAL: [Vec2D; 4] = [D_N, D_E, D_S, D_W];
+const D_ORDINAL: [Vec2D; 4] = [D_NE, D_SE, D_SW, D_NW];
+const D_ALL: [Vec2D; 8] = [D_N, D_E, D_S, D_W, D_NE, D_SE, D_SW, D_NW];
 
-/// Shift bitboard in given direction
-const fn shift(board: BitBoard, dir: Direction) -> BitBoard {
-    if dir < 0 {
-        board >> -dir
+/// Shift bitboard in given vec2d
+const fn shift(board: BitBoard, v: Vec2D) -> BitBoard {
+    let d = v.vertical * 8 + v.horizontal;
+    if d < 0 {
+        board >> -d
     } else {
-        board << dir
+        board << d
     }
 }
-/// Shift bitboard in given direction without wrapping
-fn safe_shift(board: BitBoard, dir: Direction, dist: usize) -> BitBoard {
-    shift(board & !mask_dir(dir, dist), dir * dist as i8)
+
+/// Shift bitboard in given vec2d without wrapping
+fn safe_shift(board: BitBoard, v: Vec2D) -> BitBoard {
+    shift(board & !mask_dir(v), v)
 }
 
 const fn mask_file() -> [u64; 8] {
@@ -160,24 +163,33 @@ const fn mask_rank() -> [u64; 8] {
     v
 }
 
-/// Get mask for the edge of the board in the given direction, with given steps of "thickness" for the edge
+/// Get mask for the edge of the board from vec2d, such that squares in the mask moved by the vec2d would go off-map
 /// TODO: lookup table?
-fn mask_dir(dir: Direction, steps: usize) -> BitBoard {
-    let masks = match dir {
-        D_N => MASK_RANK[(8 - steps)..8].to_vec(),
-        D_E => MASK_FILE[(8 - steps)..8].to_vec(),
-        D_S => MASK_RANK[0..(steps)].to_vec(),
-        D_W => MASK_FILE[0..(steps)].to_vec(),
-        D_NE => return mask_dir(D_N, steps) | mask_dir(D_E, steps),
-        D_SE => return mask_dir(D_S, steps) | mask_dir(D_E, steps),
-        D_SW => return mask_dir(D_S, steps) | mask_dir(D_W, steps),
-        D_NW => return mask_dir(D_N, steps) | mask_dir(D_W, steps),
-        _ => vec![0u64],
-    };
+fn mask_dir(
+    Vec2D {
+        vertical,
+        horizontal,
+    }: Vec2D,
+) -> BitBoard {
+    let masks = [
+        if vertical > 0 {
+            &MASK_RANK[(8 - vertical as usize)..8]
+        } else {
+            &MASK_RANK[(0..(-vertical) as usize)]
+        },
+        if horizontal > 0 {
+            &MASK_FILE[(8 - horizontal as usize)..8]
+        } else {
+            &MASK_FILE[(0..(-horizontal) as usize)]
+        },
+    ]
+    .concat();
     masks.iter().fold(0, |acc, m| acc | m)
 }
 
+/// West to East
 const MASK_FILE: [u64; 8] = mask_file();
+/// South to North
 const MASK_RANK: [u64; 8] = mask_rank();
 const MASK_EDGE: u64 = MASK_FILE[0] | MASK_FILE[7] | MASK_RANK[0] | MASK_RANK[7];
 
@@ -278,6 +290,18 @@ impl Board {
     }
     fn bishop_moves(&self) -> Vec<Move> {
         self.get_pieces(self.active).bishop_moves(
+            self.occupancy(self.active.other()),
+            self.occupancy(self.active),
+        )
+    }
+    fn queen_moves(&self) -> Vec<Move> {
+        self.get_pieces(self.active).queen_moves(
+            self.occupancy(self.active.other()),
+            self.occupancy(self.active),
+        )
+    }
+    fn knight_moves(&self) -> Vec<Move> {
+        self.get_pieces(self.active).knight_moves(
             self.occupancy(self.active.other()),
             self.occupancy(self.active),
         )
@@ -452,8 +476,8 @@ impl BitBoardPieces {
 
     fn king_moves(&self, occ_opp: BitBoard, occ_self: BitBoard) -> Vec<Move> {
         let mut bits = self.kings;
-        bits |= safe_shift(bits, D_E, 1) | safe_shift(bits, D_W, 1);
-        bits |= safe_shift(bits, D_N, 1) | safe_shift(bits, D_S, 1);
+        bits |= safe_shift(bits, D_E) | safe_shift(bits, D_W);
+        bits |= safe_shift(bits, D_N) | safe_shift(bits, D_S);
         bits &= !occ_self;
         let king_sq = from_mask(self.kings);
         let mut moves = Vec::new();
@@ -489,6 +513,39 @@ impl BitBoardPieces {
                 &D_ORDINAL,
             ));
         });
+        moves
+    }
+
+    fn queen_moves(&self, occ_opp: BitBoard, occ_self: BitBoard) -> Vec<Move> {
+        let mut moves = Vec::new();
+        for_bitboard_ones(self.bishops, |rank, file| {
+            moves.append(&mut ray_moves(
+                Square { rank, file },
+                occ_opp,
+                occ_self,
+                &D_ALL,
+            ));
+        });
+        moves
+    }
+
+    fn knight_moves(&self, occ_opp: BitBoard, occ_self: BitBoard) -> Vec<Move> {
+        let mut moves = Vec::new();
+
+        for (v, h) in [(1, 2), (2, 1)] {
+            for (s1, s2) in [(1, 1), (1, -1), (-1, 1), (-1, -1)] {
+                let vec = vec2d!(v * s1, h * s2);
+                for_bitboard_ones(safe_shift(self.knights, vec) & !occ_self, |rank, file| {
+                    moves.push(Move {
+                        from: Square {
+                            rank: ((rank as i8) - vec.vertical) as u8,
+                            file: ((file as i8) - vec.horizontal) as u8,
+                        },
+                        to: Square { rank, file },
+                    });
+                });
+            }
+        }
         moves
     }
 }
@@ -530,10 +587,10 @@ mod tests {
 
     #[test]
     fn test_safe_shift() {
-        assert_eq!(safe_shift(0b1, D_N, 1), 0b1_0000_0000);
-        assert_eq!(safe_shift(0b1, D_E, 1), 0b10);
-        assert_eq!(safe_shift(0b1, D_S, 1), 0);
-        assert_eq!(safe_shift(0b1, D_W, 1), 0);
+        assert_eq!(safe_shift(0b1, D_N), 0b1_0000_0000);
+        assert_eq!(safe_shift(0b1, D_E), 0b10);
+        assert_eq!(safe_shift(0b1, D_S), 0);
+        assert_eq!(safe_shift(0b1, D_W), 0);
     }
 
     #[test]
@@ -805,6 +862,51 @@ mod tests {
         );
         let moves = b.bishop_moves();
         let expected = vec!["h5g6", "h5g4"];
+        assert!(match_array(move_strings(moves), expected))
+    }
+
+
+    #[test]
+    fn knight_moves_no_obs() {
+        let b = Board::from_ascii(
+            [
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "  ♘     ",
+                "        ",
+                "        ",
+            ]
+            .join("\n"),
+        );
+        let moves = b.knight_moves();
+        let expected = vec![
+            "c3a2","c3b1","c3d1","c3e2","c3a4","c3b5","c3d5","c3e4"
+        ];
+        assert!(match_array(move_strings(moves), expected))
+    }
+
+    #[test]
+    fn knight_moves_obs() {
+        let b = Board::from_ascii(
+            [
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "   ♗    ",
+                " ♘      ",
+            ]
+            .join("\n"),
+        );
+        let moves = b.knight_moves();
+        let expected = vec![
+            "b1a3","b1c3"
+        ];
         assert!(match_array(move_strings(moves), expected))
     }
 }
