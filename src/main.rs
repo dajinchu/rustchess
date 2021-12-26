@@ -7,6 +7,7 @@ mod board;
 mod piece;
 mod vec2d;
 mod util;
+mod movement;
 
 fn main() {
     println!("{}", size_of::<Board>());
