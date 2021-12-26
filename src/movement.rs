@@ -6,6 +6,28 @@ pub enum MoveFlag {
     QueenCastle,
     Normal,
 }
+const BK: Square = Square { rank: 7, file: 4 };
+const WK: Square = Square { rank: 0, file: 4 };
+pub const BLACK_KING_CASTLE: Move = Move {
+    from: BK,
+    to: Square { rank: 7, file: 6 },
+    flag: MoveFlag::KingCastle,
+};
+pub const BLACK_QUEEN_CASTLE: Move = Move {
+    from: BK,
+    to: Square { rank: 7, file: 2 },
+    flag: MoveFlag::QueenCastle,
+};
+pub const WHITE_KING_CASTLE: Move = Move {
+    from: WK,
+    to: Square { rank: 0, file: 6 },
+    flag: MoveFlag::KingCastle,
+};
+pub const WHITE_QUEEN_CASTLE: Move = Move {
+    from: WK,
+    to: Square { rank: 0, file: 2 },
+    flag: MoveFlag::QueenCastle,
+};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Move {

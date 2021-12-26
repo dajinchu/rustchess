@@ -382,8 +382,42 @@ impl Board {
             self.occupancy(self.active),
         )
     }
+    // TODO: Check king safety. How to calculate opponent attack? 
+    fn castle_moves(&self) -> Vec<Move> {
+        let mut moves = Vec::new();
+        if self.active == Black
+            && self.castle_bk
+            && self.all_occupancy() & (to_mask(F_FILE, 7) | to_mask(G_FILE, 7)) == 0
+        {
+            moves.push(BLACK_KING_CASTLE);
+        }
+        if self.active == Black
+            && self.castle_bq
+            && self.all_occupancy() & (to_mask(B_FILE, 7) | to_mask(C_FILE, 7) | to_mask(D_FILE, 7))
+                == 0
+        {
+            moves.push(BLACK_QUEEN_CASTLE);
+        }
+        if self.active == White
+            && self.castle_wk
+            && self.all_occupancy() & (to_mask(F_FILE, 0) | to_mask(G_FILE, 0)) == 0
+        {
+            moves.push(WHITE_KING_CASTLE);
+        }
+        if self.active == White
+            && self.castle_wq
+            && self.all_occupancy() & (to_mask(F_FILE, 0) | to_mask(C_FILE, 0) | to_mask(D_FILE, 0))
+                == 0
+        {
+            moves.push(WHITE_QUEEN_CASTLE);
+        }
+        moves
+    }
     fn occupancy(&self, color: Color) -> BitBoard {
         self.get_pieces(color).bitboard_occupancy()
+    }
+    fn all_occupancy(&self) -> BitBoard {
+        self.occupancy(Black) | self.occupancy(White)
     }
 
     fn get_pieces_mut(&mut self, color: Color) -> &mut BitBoardPieces {
@@ -1006,6 +1040,67 @@ mod tests {
     }
 
     #[test]
+    fn castle_moves() {
+        let mut b = Board::from_ascii(
+            [
+                "♜   ♚♝♞♜",
+                "♟♟♟♟♟♟♟♟",
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "♙♙♙♙♙♙♙♙",
+                "♖♘♗♕♔  ♖",
+            ]
+            .join("\n"),
+        );
+        let moves = b.castle_moves();
+        assert_eq!(moves, [WHITE_KING_CASTLE]);
+        b.active = Black;
+        let moves = b.castle_moves();
+        assert_eq!(moves, [BLACK_QUEEN_CASTLE]);
+    }
+
+    #[test]
+    fn castle_moves_lost_rights() {
+        let mut b = Board::from_ascii(
+            [
+                "♜   ♚♝♞♜",
+                "♟♟♟♟♟♟♟♟",
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "♙♙♙♙♙♙♙♙",
+                "♖♘♗♕♔  ♖",
+            ]
+            .join("\n"),
+        );
+        b.castle_wk = false;
+        let moves = b.castle_moves();
+        assert_eq!(moves, []);
+    }
+
+    #[test]
+    fn castle_moves_attacked_square() {
+        let b = Board::from_ascii(
+            [
+                "    ♚♝♞ ",
+                "♟♟♟♟♟♟♟♟",
+                "        ",
+                "        ",
+                " ♜   ♜  ",
+                "        ",
+                "♙ ♙♙♙ ♙♙",
+                "♖   ♔  ♖",
+            ]
+            .join("\n"),
+        );
+        let moves = b.castle_moves();
+        assert_eq!(moves, [WHITE_QUEEN_CASTLE]);
+    }
+
+    #[test]
     fn make_move_normal() {
         let mut b = Board::from_ascii(
             [
@@ -1104,4 +1199,43 @@ mod tests {
         assert_eq!(b.castle_bq, false);
         assert_eq!(b.halfmoves, 4);
     }
+
+    #[test]
+    fn make_move_do_castle() {
+        let mut b = Board::from_ascii(
+            [
+                "♜   ♚♝♞♜",
+                "♟♟♟♟♟♟♟♟",
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "♙♙♙♙♙♙♙♙",
+                "♖♘♗♕♔  ♖",
+            ]
+            .join("\n"),
+        );
+        b.make_move(WHITE_KING_CASTLE);
+        b.make_move(BLACK_QUEEN_CASTLE);
+        assert_eq!(
+            b.to_ascii(false),
+            [
+                "  ♚♜ ♝♞♜",
+                "♟♟♟♟♟♟♟♟",
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "♙♙♙♙♙♙♙♙",
+                "♖♘♗♕ ♖♔ ",
+            ]
+            .join("\n"),
+        );
+        assert_eq!(b.castle_wk, false);
+        assert_eq!(b.castle_wq, false);
+        assert_eq!(b.castle_bk, false);
+        assert_eq!(b.castle_bq, false);
+        assert_eq!(b.halfmoves, 2);
+    }
+    // promotion and en passant
 }
