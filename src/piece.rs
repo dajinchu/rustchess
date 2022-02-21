@@ -49,6 +49,12 @@ impl Color {
             White => Black
         }
     }
+    pub fn forward(&self) -> i8 {
+        match self {
+            Black => -1,
+            White => 1,
+        }
+    }
 }
 impl PieceType {
     pub fn iterator() -> Iter<'static, PieceType> {

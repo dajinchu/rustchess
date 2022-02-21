@@ -1,10 +1,14 @@
-use crate::board::Square;
+use crate::{board::Square, piece::PieceType};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum MoveFlag {
     KingCastle,
     QueenCastle,
     Normal,
+    PromoQueen,
+    PromoBishop,
+    PromoKnight,
+    PromoRook,
 }
 const BK: Square = Square { rank: 7, file: 4 };
 const WK: Square = Square { rank: 0, file: 4 };
@@ -37,6 +41,7 @@ pub struct Move {
 }
 
 impl Move {
+    /// Shorthand to make a normal move
     pub fn normal(from: Square, to: Square) -> Move {
         Move {
             from,
@@ -44,6 +49,19 @@ impl Move {
             flag: MoveFlag::Normal,
         }
     }
+    // pub fn promotion(from: Square, to: Square, promote: PieceType) -> Move {
+    //     Move {
+    //         from,
+    //         to,
+    //         flag: match promote {
+    //             PieceType::Queen => MoveFlag::PromoQueen,
+    //             PieceType::Bishop => MoveFlag::PromoBishop,
+    //             PieceType::Knight => MoveFlag::PromoKnight,
+    //             PieceType::Rook => MoveFlag::PromoRook,
+    //             _ => panic!("Promotion must be queen, bishop, knight, or rook.")
+    //         }
+    //     }
+    // }
     /// Create move from long algebraic
     pub fn from_algebraic(algebraic: String) -> Move {
         Move {
@@ -52,11 +70,31 @@ impl Move {
             flag: MoveFlag::Normal,
         }
     }
+    /// From long algebraic with special flag
+    pub fn from_algebraic_special(algebraic: String, flag: MoveFlag) -> Move {
+        Move {
+            from: Square::from_algebraic(algebraic.chars().take(2).collect()),
+            to: Square::from_algebraic(algebraic.chars().skip(2).take(2).collect()),
+            flag,
+        }
+    }
 }
 
 impl std::fmt::Display for Move {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}{}", self.from, self.to)
+        write!(
+            f,
+            "{}{}{}",
+            self.from,
+            self.to,
+            match self.flag {
+                MoveFlag::PromoQueen => "q",
+                MoveFlag::PromoBishop => "b",
+                MoveFlag::PromoRook => "r",
+                MoveFlag::PromoKnight => "n",
+                _ => "",
+            }
+        )
     }
 }
 

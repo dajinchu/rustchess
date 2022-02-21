@@ -8,7 +8,7 @@ Notes:
 How to represent color? Separate bitboards for each color or a mask?
 */
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct Board {
     white: BitBoardPieces,
     black: BitBoardPieces,
@@ -21,7 +21,7 @@ pub struct Board {
     halfmoves: u8,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 struct BitBoardPieces {
     pawns: BitBoard,
     rooks: BitBoard,
@@ -48,7 +48,7 @@ impl Square {
     }
 }
 
-pub fn to_mask(file: u8, rank: u8) -> u64 {
+pub const fn to_mask(file: u8, rank: u8) -> u64 {
     1 << (rank * 8 + file)
 }
 pub fn from_mask(mask: u64) -> Square {
@@ -270,6 +270,10 @@ impl Board {
     }
 
     pub fn valid_moves(&self) -> Vec<Move> {
+        [self.non_castle_moves(), self.castle_moves()].concat()
+    }
+
+    pub fn non_castle_moves(&self) -> Vec<Move> {
         [
             self.pawn_moves(),
             self.king_moves(),
@@ -277,6 +281,7 @@ impl Board {
             self.bishop_moves(),
             self.queen_moves(),
             self.knight_moves(),
+            self.enpassant_moves(),
         ]
         .concat()
     }
@@ -296,18 +301,46 @@ impl Board {
             self.halfmoves += 1;
         }
 
-        self.move_piece(m, p);
-        // Handle Castling
+        // Taking passant: Capture
+        if let Some(passant_sq) = self.passant {
+            if p.1 == Pawn && passant_sq == m.to {
+                self.clear_square(m.to.file, m.from.rank)
+            }
+        }
+
+        // Set passant if double move. Clear otherwise
+        if p.1 == Pawn && (m.from.rank as i8 - m.to.rank as i8).abs() == 2 {
+            self.passant = Some(Square {
+                rank: (m.from.rank + m.to.rank) / 2,
+                file: m.from.file,
+            })
+        } else {
+            self.passant = None;
+        }
+
+        // Move
         match flag {
             MoveFlag::KingCastle => {
-                self.set_square(F_FILE, to.rank, (self.active, Rook));
-                self.clear_square(H_FILE, to.rank);
+                let rank = to.rank;
+                self.move_piece(m, p);
+                self.move_piece(
+                    Move::normal(Square { file: H_FILE, rank }, Square { file: F_FILE, rank }),
+                    (p.0, Rook),
+                );
             }
             MoveFlag::QueenCastle => {
-                self.set_square(D_FILE, to.rank, (self.active, Rook));
-                self.clear_square(A_FILE, to.rank);
+                let rank = to.rank;
+                self.move_piece(m, p);
+                self.move_piece(
+                    Move::normal(Square { file: A_FILE, rank }, Square { file: D_FILE, rank }),
+                    (p.0, Rook),
+                );
             }
-            MoveFlag::Normal => (),
+            MoveFlag::PromoQueen => self.move_piece(m, (p.0, Queen)),
+            MoveFlag::PromoBishop => self.move_piece(m, (p.0, Bishop)),
+            MoveFlag::PromoRook => self.move_piece(m, (p.0, Rook)),
+            MoveFlag::PromoKnight => self.move_piece(m, (p.0, Knight)),
+            MoveFlag::Normal => self.move_piece(m, p),
         }
 
         // update castle rights
@@ -382,34 +415,85 @@ impl Board {
             self.occupancy(self.active),
         )
     }
-    // TODO: Check king safety. How to calculate opponent attack? 
+    // TODO: Check king safety. How to calculate opponent attack?
     fn castle_moves(&self) -> Vec<Move> {
         let mut moves = Vec::new();
-        if self.active == Black
-            && self.castle_bk
-            && self.all_occupancy() & (to_mask(F_FILE, 7) | to_mask(G_FILE, 7)) == 0
-        {
-            moves.push(BLACK_KING_CASTLE);
+        // TODO: make checks array constant at compile time.
+        let black_checks = [
+            (
+                self.castle_bk,
+                (to_mask(F_FILE, 7) | to_mask(G_FILE, 7)),
+                BLACK_KING_CASTLE,
+            ),
+            (
+                self.castle_bq,
+                (to_mask(B_FILE, 7) | to_mask(C_FILE, 7) | to_mask(D_FILE, 7)),
+                BLACK_QUEEN_CASTLE,
+            ),
+        ];
+        let white_checks = [
+            (
+                self.castle_wk,
+                (to_mask(F_FILE, 0) | to_mask(G_FILE, 0)),
+                WHITE_KING_CASTLE,
+            ),
+            (
+                self.castle_wq,
+                (to_mask(F_FILE, 0) | to_mask(C_FILE, 0) | to_mask(D_FILE, 0)),
+                WHITE_QUEEN_CASTLE,
+            ),
+        ];
+        let checks = if self.active == White {
+            white_checks
+        } else {
+            black_checks
+        };
+        let mut copied = *self;
+
+        for (can_castle, path, m) in checks {
+            if can_castle && self.all_occupancy() & path == 0 {
+                copied.get_pieces_mut(self.active).pawns |= path;
+                copied.active = self.active.other();
+                // TODO: generating all moves like this defintely a waste of resources
+                //   could be way to figure out threatened square much faster.
+                //   or at least cache this result
+                let is_threatened = copied
+                    .non_castle_moves()
+                    .iter()
+                    .any(|&m| to_mask(m.to.file, m.to.rank) & path != 0);
+                if !is_threatened {
+                    moves.push(m);
+                }
+            }
         }
-        if self.active == Black
-            && self.castle_bq
-            && self.all_occupancy() & (to_mask(B_FILE, 7) | to_mask(C_FILE, 7) | to_mask(D_FILE, 7))
-                == 0
-        {
-            moves.push(BLACK_QUEEN_CASTLE);
-        }
-        if self.active == White
-            && self.castle_wk
-            && self.all_occupancy() & (to_mask(F_FILE, 0) | to_mask(G_FILE, 0)) == 0
-        {
-            moves.push(WHITE_KING_CASTLE);
-        }
-        if self.active == White
-            && self.castle_wq
-            && self.all_occupancy() & (to_mask(F_FILE, 0) | to_mask(C_FILE, 0) | to_mask(D_FILE, 0))
-                == 0
-        {
-            moves.push(WHITE_QUEEN_CASTLE);
+        moves
+    }
+    fn enpassant_moves(&self) -> Vec<Move> {
+        let mut moves = Vec::with_capacity(2);
+        match self.passant {
+            Some(sq) => {
+                let sign: i8 = self.active.forward();
+                let pawns = self.bitboard_for(self.active, Pawn);
+                if pawns & safe_shift(to_mask(sq.file, sq.rank), D_S * sign + D_E) != 0 {
+                    moves.push(Move::normal(
+                        Square {
+                            rank: (sq.rank as i8 - sign) as u8,
+                            file: sq.file + 1,
+                        },
+                        sq,
+                    ));
+                }
+                if pawns & safe_shift(to_mask(sq.file, sq.rank), D_S * sign + D_W) != 0 {
+                    moves.push(Move::normal(
+                        Square {
+                            rank: (sq.rank as i8 - sign) as u8,
+                            file: sq.file - 1,
+                        },
+                        sq,
+                    ));
+                }
+            }
+            None => (),
         }
         moves
     }
@@ -542,13 +626,24 @@ impl BitBoardPieces {
         let mut moves = Vec::new();
         // Move forward 1
         for_bitboard_ones(shift(unblocked, D_N * sign), |rank, file| {
-            moves.push(Move::normal(
-                Square {
-                    rank: (rank as i8 - sign) as u8,
-                    file,
-                },
-                Square { rank, file },
-            ))
+            let from = Square {
+                rank: (rank as i8 - sign) as u8,
+                file,
+            };
+            let to = Square { rank, file };
+            if rank == 0 || rank == 7 {
+                // Must include all promotion moves
+                for flag in [
+                    MoveFlag::PromoRook,
+                    MoveFlag::PromoBishop,
+                    MoveFlag::PromoKnight,
+                    MoveFlag::PromoQueen,
+                ] {
+                    moves.push(Move { from, to, flag });
+                }
+            } else {
+                moves.push(Move::normal(from, to))
+            }
         });
         // Move forward 2 if in starting square
         for_bitboard_ones(
@@ -843,6 +938,28 @@ mod tests {
     }
 
     #[test]
+    fn pawn_moves_promotion() {
+        let b = Board::from_ascii(
+            [
+                "        ",
+                "  ♙     ",
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+            ]
+            .join("\n"),
+        );
+        let moves = b.pawn_moves();
+        assert!(match_array(
+            move_strings(moves),
+            vec!["c7c8q", "c7c8r", "c7c8b", "c7c8n"]
+        ));
+    }
+
+    #[test]
     fn king_moves_no_obstacles() {
         let b = Board::from_ascii(
             [
@@ -1085,19 +1202,39 @@ mod tests {
     fn castle_moves_attacked_square() {
         let b = Board::from_ascii(
             [
-                "    ♚♝♞ ",
+                "    ♚♝  ",
                 "♟♟♟♟♟♟♟♟",
                 "        ",
                 "        ",
-                " ♜   ♜  ",
-                "        ",
+                " ♜      ",
+                "      ♞ ",
                 "♙ ♙♙♙ ♙♙",
                 "♖   ♔  ♖",
             ]
             .join("\n"),
         );
         let moves = b.castle_moves();
-        assert_eq!(moves, [WHITE_QUEEN_CASTLE]);
+        assert_eq!(moves, []);
+    }
+
+    #[test]
+    fn enpassant_moves() {
+        let mut b = Board::from_ascii(
+            [
+                "        ",
+                "        ",
+                "        ",
+                "♟♙     ♙",
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+            ]
+            .join("\n"),
+        );
+        b.passant = Some(Square { rank: 5, file: 0 });
+        let moves = b.enpassant_moves();
+        assert_eq!(move_strings(moves), ["b5a6"]);
     }
 
     #[test]
@@ -1237,5 +1374,111 @@ mod tests {
         assert_eq!(b.castle_bq, false);
         assert_eq!(b.halfmoves, 2);
     }
-    // promotion and en passant
+
+    #[test]
+    fn make_move_sets_en_passant() {
+        let mut b = Board::from_ascii(
+            [
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "     ♟  ",
+                "        ",
+                "      ♙ ",
+                "        ",
+            ]
+            .join("\n"),
+        );
+        assert_eq!(b.passant, None);
+        // Making double push causes passant to be set
+        b.make_move(Move::from_algebraic("g2g4".to_string()));
+        assert_eq!(b.passant, Some(Square::from_algebraic("g3".to_string())));
+        // En passant can be taken
+        b.make_move(Move::from_algebraic("f4g3".to_string()));
+        assert_eq!(
+            b.to_ascii(false),
+            [
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "      ♟ ",
+                "        ",
+                "        ",
+            ]
+            .join("\n"),
+        );
+        assert_eq!(b.passant, None);
+    }
+
+    #[test]
+    fn make_move_clears_en_passant() {
+        let mut b = Board::from_ascii(
+            [
+                "♜       ",
+                "        ",
+                "        ",
+                "        ",
+                "     ♟♙ ",
+                "        ",
+                "        ",
+                "        ",
+            ]
+            .join("\n"),
+        );
+        b.passant = Some(Square::from_algebraic("g3".to_string()));
+        // En passant is cleared even with unrelated move
+        b.make_move(Move::from_algebraic("a8b8".to_string()));
+        assert_eq!(b.passant, None);
+    }
+
+    #[test]
+    fn make_move_promotion() {
+        let mut b = Board::from_ascii(
+            [
+                "        ",
+                "    ♙♙♙♙",
+                "        ",
+                "        ",
+                "     ♟  ",
+                "        ",
+                "        ",
+                "        ",
+            ]
+            .join("\n"),
+        );
+        b.make_move(Move::from_algebraic_special(
+            "h7h8".to_string(),
+            MoveFlag::PromoQueen,
+        ));
+        b.make_move(Move::from_algebraic_special(
+            "g7g8".to_string(),
+            MoveFlag::PromoRook,
+        ));
+        b.make_move(Move::from_algebraic_special(
+            "f7f8".to_string(),
+            MoveFlag::PromoBishop,
+        ));
+        b.make_move(Move::from_algebraic_special(
+            "e7e8".to_string(),
+            MoveFlag::PromoKnight,
+        ));
+        assert_eq!(
+            b.to_ascii(false),
+            [
+                "    ♘♗♖♕",
+                "        ",
+                "        ",
+                "        ",
+                "     ♟  ",
+                "        ",
+                "        ",
+                "        ",
+            ]
+            .join("\n"),
+        );
+        assert_eq!(b.halfmoves, 0)
+    }
 }
